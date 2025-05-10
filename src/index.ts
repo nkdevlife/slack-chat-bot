@@ -7,7 +7,11 @@ app.use(express.json());
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY!;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY!
+
+app.get("/", (_req, res) => {
+  res.send("Slack Multi-AI Bot is running!");
+});
 
 app.post("/slack/events", async (req: express.Request, res: express.Response): Promise<void> => {
   const { type, event } = req.body;
@@ -15,6 +19,7 @@ app.post("/slack/events", async (req: express.Request, res: express.Response): P
   // SlackのURL検証用
   if (type === "url_verification") {
     res.send({ challenge: req.body.challenge });
+    return;
   }
 
   // メンション対応
@@ -120,3 +125,8 @@ async function callDeepSeek(prompt: string): Promise<string> {
   const content = response.data.choices?.[0]?.message?.content;
   return content || "DeepSeekからの応答が得られませんでした。";
 }
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
