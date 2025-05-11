@@ -1,132 +1,47 @@
-import express from 'express';
-import axios from 'axios';
+import pkg from "@slack/bolt";
+import { GoogleGenAI } from "@google/genai";
+import * as dotenv from "dotenv";
 
-const app = express();
-app.use(express.json());
+dotenv.config();
 
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
+const { App } = pkg;
+
+const app = new App({
+  token: process.env.SLACK_BOT_TOKEN,
+  appToken: process.env.SLACK_APP_TOKEN,
+  socketMode: true,
+});
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY!
-
-app.get("/", (_req, res) => {
-  res.send("Slack Multi-AI Bot is running!");
-});
-
-app.post("/slack/events", async (req: express.Request, res: express.Response): Promise<void> => {
-  const { type, event } = req.body;
-
-  // SlackのURL検証用
-  if (type === "url_verification") {
-    res.send({ challenge: req.body.challenge });
-    return;
-  }
-
-  // メンション対応
-  if (event?.type === "app_mention") {
-    const text: string = event.text.toLowerCase();
-    const prompt = text.replace(/<@[^>]+>\s*/,  "");
-
-    let reply = "対応するAIが見つかりませんでした。";
-
-    try {
-      if (prompt.startsWith("/gpt")) {
-        reply = await callGPT(prompt.replace("/gpt", "").trim());
-      } else if (prompt.startsWith("/gemini")) {
-        reply = await callGemini(prompt.replace("/gemini", "").trim());
-      } else if (prompt.startsWith("/deepseek")) {
-        reply = await callDeepSeek(prompt.replace("/deepseek", "").trim());
-      }
-
-      await axios.post(
-        "https://slack.com/api/chat.postMessage",
-        {
-          channel: event.channel,
-          text: reply,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    } catch (error) {
-      console.error("Error:", error);
-    }
-
-    res.sendStatus(200);
-  } else {
-    res.sendStatus(200);
-  }
-});
-
-async function callGPT(prompt: string): Promise<string> {
-  const res = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "user", content: prompt }],
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-  return res.data.choices[0].message.content;
-}
+const GEMINI_SYSTEM_INSTRUCTION = process.env.GEMINI_SYSTEM_INSTRUCTION!;
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 async function callGemini(prompt: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
-
-  const response = await axios.post(
-    url,
-    {
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
+  const response = await ai.models.generateContent({
+    model: "gemini-2.0-flash",
+    contents: prompt,
+    config: {
+      systemInstruction: GEMINI_SYSTEM_INSTRUCTION
     },
-    {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }
-  );
+  });
+  console.log(response.text);
+  return response.text ?? "";
+}
 
-  const candidates = response.data.candidates;
-  if (!candidates || candidates.length === 0) {
-    return "Geminiから応答がありませんでした。";
+app.event("app_mention", async ({ event, say }) => {
+  console.log("event", JSON.stringify(event));
+  const text = event.text.replace(/<@[^>]+>\s*/, "").trim();
+
+  try {
+    const response = await callGemini(text);
+    await say(response);
+  } catch (err) {
+    console.error("Gemini API error:", err);
+    await say("Geminiとの通信でエラーが発生しました。");
   }
-
-  return candidates[0].content.parts[0].text;
-}
-
-async function callDeepSeek(prompt: string): Promise<string> {
-
-  const response = await axios.post(
-    "https://api.deepseek.com/v1/chat/completions",
-    {
-      model: "deepseek-chat",
-      messages: [{ role: "user", content: prompt }],
-    },
-    {
-      headers: {
-        "Authorization": `Bearer ${DEEPSEEK_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  const content = response.data.choices?.[0]?.message?.content;
-  return content || "DeepSeekからの応答が得られませんでした。";
-}
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
 });
+
+(async () => {
+  await app.start();
+  console.log("⚡️ Gemini-only Slack Bot is running!");
+})();
