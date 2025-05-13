@@ -1,17 +1,13 @@
-import pkg from "@slack/bolt";
+import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
 
 dotenv.config();
 
-const { App } = pkg;
+const app = express();
+app.use(express.json());
 
-const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  appToken: process.env.SLACK_APP_TOKEN,
-  socketMode: true,
-});
-
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
 const GEMINI_SYSTEM_INSTRUCTION = process.env.GEMINI_SYSTEM_INSTRUCTION!;
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
@@ -28,20 +24,46 @@ async function callGemini(prompt: string): Promise<string> {
   return response.text ?? "";
 }
 
-app.event("app_mention", async ({ event, say }) => {
-  console.log("event", JSON.stringify(event));
-  const text = event.text.replace(/<@[^>]+>\s*/, "").trim();
+// Slackからのイベント受信エンドポイント
+app.post("/slack/events", async (req, res): Promise<void>  => {
+  console.log("Headers:", JSON.stringify(req.headers));
+  console.log("Body:", JSON.stringify(req.body));
+  const { type, event, challenge } = req.body;
 
-  try {
-    const response = await callGemini(text);
-    await say(response);
-  } catch (err) {
-    console.error("Gemini API error:", err);
-    await say("Geminiとの通信でエラーが発生しました。");
+  // SlackのURL検証
+  if (type === "url_verification") {
+    res.send({ challenge });
+    return;
   }
+
+  // メンションに対応
+  if (event?.type === "app_mention") {
+    const text = event.text.replace(/<@[^>]+>\s*/, "").trim();
+
+    try {
+      const reply = await callGemini(text);
+
+      // 応答をSlackに送信
+      await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          channel: event.channel,
+          text: reply,
+        }),
+      });
+    } catch (err) {
+      console.error("Gemini API error:", err);
+    }
+  }
+
+  res.sendStatus(200);
 });
 
-(async () => {
-  await app.start();
-  console.log("⚡️ Gemini-only Slack Bot is running!");
-})();
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Webhook-based Slack Bot is listening on port ${PORT}`);
+});
