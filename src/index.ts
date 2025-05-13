@@ -46,6 +46,8 @@ app.post("/slack/events", async (req, res): Promise<void>  => {
     res.status(403).send("Invalid signature");
     return;
   }
+  console.log("Headers:", JSON.stringify(req.headers));
+  console.log("Body:", JSON.stringify(req.body));
   const { type, event, challenge } = req.body;
 
   // SlackのURL検証
